@@ -120,3 +120,53 @@ try(openSearchClient; consumer){
     } else {
         log.info("The Wikimedia Index already exits");
     }
+    try(openSearchClient; consumer){
+
+        boolean indexExists = openSearchClient.indices().exists(new GetIndexRequest("wikimedia"), RequestOptions.DEFAULT);
+        if (!indexExists){
+            CreateIndexRequest createIndexRequest = new CreateIndexRequest("wikimedia");
+            openSearchClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
+            log.info("The Wikimedia Index has been created!");
+        } else {
+            log.info("The Wikimedia Index already exits");
+        }
+
+        consumer.subscribe(Collections.singleton("wikimedia.recentchange"));
+        for (ConsumerRecord<String, String> record : records) {
+
+            // send the record into OpenSearch
+
+            // strategy 1
+            // define an ID using Kafka Record coordinates
+//                    String id = record.topic() + "_" + record.partition() + "_" + record.offset();
+
+            try {
+                // strategy 2
+                // we extract the ID from the JSON value
+                String id = extractId(record.value());
+                IndexRequest indexRequest = new IndexRequest("wikimedia")
+                .source(record.value(), XContentType.JSON)
+                .id(id);
+
+//                        IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
+
+        bulkRequest.add(indexRequest);
+        log.info(response.getId());
+    } catch (Exception e){
+
+    }
+
+}
+
+} catch (WakeupException e) {
+    log.info("Consumer is starting to shut down");
+} catch (Exception e) {
+    log.error("Unexpected exception in the consumer", e);
+} finally {
+    consumer.close(); // close the consumer, this will also commit offsets
+    openSearchClient.close();
+    log.info("The consumer is now gracefully shut down");
+}
+
+}
+}
