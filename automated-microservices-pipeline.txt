@@ -1,0 +1,179 @@
+# File: pipeline-orchestrator.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+data:
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+  DOCKER_REGISTRY: ${DOCKER_REGISTRY}
+  KUBERNETES_CLUSTER: ${KUBERNETES_CLUSTER}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-orchestrator
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pipeline-orchestrator
+  template:
+    metadata:
+      labels:
+        app: pipeline-orchestrator
+    spec:
+      containers:
+      - name: pipeline-orchestrator
+        image: pipeline-orchestrator:latest
+        envFrom:
+        - configMapRef:
+            name: pipeline-config
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-orchestrator
+spec:
+  selector:
+    app: pipeline-orchestrator
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+---
+# File: pipeline-orchestrator.py
+
+import os
+import yaml
+from flask import Flask, request, jsonify
+from github import Github
+from kubernetes import client, config
+
+app = Flask(__name__)
+
+# Load configuration
+github_token = os.environ['GITHUB_TOKEN']
+docker_registry = os.environ['DOCKER_REGISTRY']
+kubernetes_cluster = os.environ['KUBERNETES_CLUSTER']
+
+# Initialize GitHub client
+g = Github(github_token)
+
+# Load Kubernetes configuration
+config.load_incluster_config()
+k8s_client = client.CoreV1Api()
+
+@app.route('/webhook', methods=['POST'])
+def github_webhook():
+    # Verify GitHub webhook signature
+    # ... (implement signature verification)
+
+    event = request.json
+    if event['ref'] == 'refs/heads/main':
+        repo_name = event['repository']['full_name']
+        commit_sha = event['after']
+        
+        # Trigger CI/CD pipeline
+        trigger_pipeline(repo_name, commit_sha)
+        
+    return jsonify({'status': 'success'}), 200
+
+def trigger_pipeline(repo_name, commit_sha):
+    # 1. Clone repository
+    repo = g.get_repo(repo_name)
+    repo_clone_url = repo.clone_url
+
+    # 2. Read pipeline configuration
+    pipeline_config = read_pipeline_config(repo, commit_sha)
+
+    # 3. Build Docker image
+    docker_image = f"{docker_registry}/{repo_name}:{commit_sha}"
+    build_docker_image(repo_clone_url, commit_sha, docker_image)
+
+    # 4. Run tests
+    run_tests(pipeline_config)
+
+    # 5. Push Docker image
+    push_docker_image(docker_image)
+
+    # 6. Deploy to Kubernetes
+    deploy_to_kubernetes(pipeline_config, docker_image)
+
+def read_pipeline_config(repo, commit_sha):
+    config_content = repo.get_contents("pipeline.yaml", ref=commit_sha).decoded_content
+    return yaml.safe_load(config_content)
+
+def build_docker_image(repo_url, commit_sha, image_name):
+    # Implement Docker build logic
+    pass
+
+def run_tests(pipeline_config):
+    # Run tests based on pipeline configuration
+    pass
+
+def push_docker_image(image_name):
+    # Push Docker image to registry
+    pass
+
+def deploy_to_kubernetes(pipeline_config, docker_image):
+    # Deploy to Kubernetes based on pipeline configuration
+    deployment = client.V1Deployment(
+        metadata=client.V1ObjectMeta(name=pipeline_config['name']),
+        spec=client.V1DeploymentSpec(
+            replicas=pipeline_config['replicas'],
+            selector=client.V1LabelSelector(
+                match_labels={"app": pipeline_config['name']}
+            ),
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(
+                    labels={"app": pipeline_config['name']}
+                ),
+                spec=client.V1PodSpec(
+                    containers=[
+                        client.V1Container(
+                            name=pipeline_config['name'],
+                            image=docker_image,
+                            ports=[client.V1ContainerPort(container_port=80)]
+                        )
+                    ]
+                )
+            )
+        )
+    )
+    
+    k8s_apps_v1 = client.AppsV1Api()
+    k8s_apps_v1.create_namespaced_deployment(
+        body=deployment,
+        namespace="default"
+    )
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
+
+---
+# File: example-microservice/pipeline.yaml
+
+name: example-microservice
+language: python
+version: 1.0.0
+replicas: 3
+tests:
+  - unit
+  - integration
+  - e2e
+resources:
+  cpu: 100m
+  memory: 128Mi
+env:
+  - name: DB_URL
+    value: ${DB_URL}
+  - name: API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: api-secrets
+        key: api-key
+
