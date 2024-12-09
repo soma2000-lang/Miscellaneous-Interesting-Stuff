@@ -1,0 +1,146 @@
+---
+- name: create a VPC 
+  ec2_vpc_net:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}"    
+    name: "{{ vpc_name }}"    
+    cidr_block: "{{ vpc_cidr }}"    
+    tags: "{{ vpc_resource_tags }}"      
+    tenancy: "{{ vpc_tenancy }}"
+    dns_support : "{{ vpc_dns_support }}"
+    dns_hostnames: "{{ vpc_dns_hostnames }}"   
+  register: created_vcp
+  tags:
+    - vpc
+    - vpc-create
+    
+- ec2_vpc_net_facts:
+     aws_access_key: "{{ec2_access_key}}"
+     aws_secret_key: "{{ec2_secret_key}}"
+     region: "{{ vpc_region }}" 
+  register: all_vpc
+  tags:
+    - vpc
+    - vpc-create
+  
+  
+# - debug: 
+#     var: created_vcp.vpc.id
+    #verbosity: 4
+    
+- ec2_vpc_igw:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}" 
+    vpc_id: "{{ created_vcp.vpc.id }}"
+    state: "{{ vpc_internet_gateway }}"
+  register: created_igw
+  tags:
+    - vpc
+    - igw
+  
+# - debug: 
+#     var: created_igw
+    
+- name: Create subnets within VPC
+  ec2_vpc_subnet:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}"  
+    state: "{{ item.state }}"
+    vpc_id: "{{ created_vcp.vpc.id }}"
+    az: "{{ item.availability_zone }}"
+    cidr: "{{ item.cidr }}"
+    map_public : "{{ item.assign_pub_ip_to_instance }}"
+    resource_tags:
+      Name: "{{ item.name }}"
+  register: created_subnet
+  with_items: "{{ vpc_subnets }}"
+  tags:
+    - vpc
+    - subnet
+
+# - debug: 
+#     var: created_subnet.results[0]
+    #verbosity: 4
+    
+# - debug:
+#     msg: "{{ item }}"
+#   when: item.item.name == "app_subnet"
+#   with_items: "{{ created_subnet.results }}"
+  
+  
+  
+- name: Set up public subnet route table
+  ec2_vpc_route_table:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}"  
+    vpc_id: "{{ created_vcp.vpc.id }}"  
+    purge_routes: "{{ purge_existing_routes_from_subnet}}"
+    tags:
+      Name: "{{ item.item.route_table_name }}"
+    subnets: 
+      - "{{ item.subnet.id }}"     
+    routes:
+      - dest: 0.0.0.0/0
+        gateway_id: "{{ created_igw.gateway_id }}"  
+    state: "{{ item.item.state }}"
+  when: 
+    - item.item.route_table_name is defined
+    - item.item.route_to_internet_gateway == True
+    - item.item.state == 'present'  
+  with_items: "{{ created_subnet.results }}"
+  register: created_route_table
+  tags:
+    - vpc
+    - route-table
+  
+  
+- name: collect route table facts for 
+  ec2_vpc_route_table_facts:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}"
+    filters:
+      vpc-id: "{{ created_vcp.vpc.id }}"   
+  register: route_table_facts
+
+- name: get if of the route table which should be  used to delete the table later
+  debug: 
+    msg: "{{ route_table_facts | json_query(qry)  }}"
+  when:
+    - item.route_to_internet_gateway == True
+    - item.route_table_name is defined
+#     - item.state == 'absent'
+  with_items: "{{ vpc_subnets }}"
+  vars:
+    qry: "route_tables[?tags.Name=='{{ item.route_table_name }}'].id"
+  tags:
+    - vpc
+    - route-table
+
+    
+    
+- name: create security  group
+  ec2_group:
+    aws_access_key: "{{ec2_access_key}}"
+    aws_secret_key: "{{ec2_secret_key}}"
+    region: "{{ vpc_region }}"  
+    vpc_id: "{{ created_vcp.vpc.id }}"  
+    name: "{{ item.name }}"
+    description: "{{ item.description }}"    
+    rules: "{{ item.rules }}"  
+    rules_egress: "{{ item.rules_egress }}"
+    state: "{{ item.state }}"
+  with_items: "{{ vpc_security_groups }}"
+  tags:
+    - vpc
+    - sec-group
+      
+    
+
+    
+    
+    

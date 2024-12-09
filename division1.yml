@@ -1,0 +1,161 @@
+vpc_region: "ap-south-1"
+vpc_name: division1_vpc
+vpc_state: present
+vpc_cidr: 10.10.0.0/16
+vpc_internet_gateway: present
+vpc_subnets: 
+  - name: db_subnet
+    availability_zone: ap-south-1b
+    cidr: 10.10.1.0/24
+    route_to_internet_gateway: False
+    assign_pub_ip_to_instance: False
+    state: present
+    
+  - name: app_subnet
+    availability_zone: ap-south-1b
+    cidr: 10.10.2.0/24
+    route_to_internet_gateway: True
+    route_table_name: public
+    assign_pub_ip_to_instance: True
+    state: present
+    
+vpc_security_groups:
+  - name: sg1
+    description: Rule for app server
+    state: present
+    rules:         
+      - proto: tcp
+        ports:
+          - 22
+          - 80
+          - 443          
+        cidr_ip: 0.0.0.0/0              
+    rules_egress:
+      - proto: tcp
+        from_port: 80
+        to_port: 80
+        cidr_ip: 0.0.0.0/0
+        cidr_ipv6: 64:ff9b::/96      
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: 0.0.0.0/0
+        
+  - name: sg2
+    description: Rule for database
+    state: present
+    rules:         
+      - proto: tcp
+        ports:
+          - 22
+          - 3306                    
+        cidr_ip: 0.0.0.0/0              
+    rules_egress:
+       - proto: tcp
+         from_port:
+           - 22
+ 
+key_pairs:      
+  - key_pair_name: k1
+    public_key_filename: /home/bhujay/.ssh/id_rsa.pub
+    state: present
+
+list_of_computes:
+  - name: c1
+    instance_type: t2.micro
+    image_id: ami-1c200c73
+    key_name: k1
+    security_groups: 
+      - sg1
+    monitoring: no
+    tenancy: default
+    assign_public_ip: yes
+    instance_tags:        
+        app: app1
+    count: 1
+    vpc_subnet_name: app_subnet
+    availability_zone: ap-south-1b
+    region: "ap-south-1"
+    state: present
+    
+  - name: c2
+    instance_type: t2.micro
+    image_id: ami-1c200c73
+    key_name: k1
+    security_groups: 
+      - sg1
+    monitoring: no
+    tenancy: default
+    assign_public_ip: no
+    instance_tags:        
+        app: app2
+    count: 1
+    vpc_subnet_name: app_subnet
+    availability_zone: ap-south-1b
+    region: "ap-south-1"
+    state: present
+    
+  - name: c3
+    instance_type: t2.micro
+    image_id: ami-1c200c73
+    key_name: k1
+    security_groups: 
+      - sg2
+    monitoring: no
+    tenancy: default
+    assign_public_ip: no
+    instance_tags:        
+        db: db1
+    count: 1
+    vpc_subnet_name: db_subnet
+    availability_zone: ap-south-1b
+    region: "ap-south-1"
+    state: present
+    
+list_of_load_balancer:
+  - name: elb1
+    state: present
+    cross_az_load_balancing: no    
+    listeners:
+      - protocol: http # options are http, https, ssl, tcp
+        load_balancer_port: 80
+        instance_port: 80
+        proxy_protocol: True
+#       - protocol: https
+#         load_balancer_port: 443
+#         instance_protocol: http # optional, defaults to value of protocol setting
+#         instance_port: 80
+        # ssl certificate required for https or ssl
+        #ssl_certificate_id: "arn:aws:iam::123456789012:server-certificate/company/servercerts/ProdServerCert"
+    scheme:  internet-facing
+    instance_names: 
+      - c1
+      - c2
+    #Zones should be empty if using subnets.
+    subnets:
+      - app_subnet
+    security_group_names:
+      - sg1
+    stickiness:
+      type: application
+      enabled: yes
+      cookie: SESSIONID    
+    health_check:
+        ping_protocol: http # options are http, https, ssl, tcp
+        ping_port: 80
+        ping_path: "/index.html" # not required for tcp or ssl
+        response_timeout: 5 # seconds
+        interval: 30 # seconds
+        unhealthy_threshold: 2
+        healthy_threshold: 10
+#     access_logs:
+#         interval: 5 # minutes (defaults to 60)
+#         s3_location: "my-bucket" # This value is required if access_logs is set
+#         s3_prefix: "logs"
+    
+      
+    
+    
+    
+  
+    
