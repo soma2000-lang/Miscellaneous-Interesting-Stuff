@@ -1,109 +1,31 @@
 ---
-- name: collect vpc facts
-  ec2_vpc_net_facts:
-    aws_access_key: "{{ec2_access_key}}"
-    aws_secret_key: "{{ec2_secret_key}}"
-    region: "{{ vpc_region }}" 
-    filters:
-      "tag:Name": "{{ vpc_name }}"      
-  register: vpc_facts 
-  tags:
-    - elb
-    
-- name: collect subnet facts
-  ec2_vpc_subnet_facts:
-    aws_access_key: "{{ec2_access_key}}"
-    aws_secret_key: "{{ec2_secret_key}}"
-    region: "{{ vpc_region }}" 
-    filters:
-      vpc-id: "{{ vpc_facts.vpcs[0].id }}"      
-  register: subnet_facts
-  tags:
-    - elb
 
-# - debug:
-#     msg: "{{ subnet_facts | json_query(qry) }}"
-#   with_subelements: 
-#     - "{{ list_of_load_balancer }}"
-#     - subnets
-#   vars:
-#     qry: "subnets[?tags.Name=='{{ item.1 }}'].id"
-#   tags:
-#     - elb
+- block:
+    - name: Get system username
+      become: false
+      ansible.builtin.command: whoami
+      register: system_user
+      changed_when: false
 
-- name: collect ec2 facts
-  ec2_instance_facts:
-    aws_access_key: "{{ec2_access_key}}"
-    aws_secret_key: "{{ec2_secret_key}}"
-    region: "{{ vpc_region }}"   
-#     filters:
-#       "tag:Name": "{{ item.1 }}"
-#   with_subelements:
-#     - "{{ list_of_load_balancer }}"
-#     - instance_names
-  register: ec2_facts
-  tags:
-    - elb
-  
-# - debug:
-#     msg: "{{ ec2_facts | json_query(qry) | join(',') }}"
-#   with_subelements:
-#     - "{{ list_of_load_balancer }}"
-#     - instance_names
-#   vars:
-#     qry: "instances[?tags.Name=='{{item.1}}'].instance_id"
-#   tags:
-#     - elb
-    
-- name: set a blank ec2_id_list 
-  set_fact:
-    ec2_id_list: []
-  tags:
-    - elb
-  
-- name: extract ec2 id from instance names and append to ec2_id_list
-  set_fact:
-    ec2_id_list: "{{ ec2_id_list + ec2_facts | json_query(qry) }}"
-  with_subelements:
-    - "{{ list_of_load_balancer }}"
-    - instance_names
-  vars:
-    qry: "instances[?tags.Name=='{{item.1}}'].instance_id"
-  tags:
-    - elb
-    
-# - debug:
-#     msg: "{{ ec2_id_list }}"
-#   tags:
-#     - elb
+    - name: "Add public keys to ~{{ system_user.stdout }}/.ssh/authorized_keys"
+      ansible.posix.authorized_key:
+        user: "{{ system_user.stdout }}"
+        key: "{{ item }}"
+        state: present
+      loop: "{{ ssh_public_keys_list | map('replace', '\"', '') | map('replace', \"'\", \"\") | list }}"
+      vars:
+        ssh_public_keys_list: >-
+          {{
+            (ssh_public_keys
+            | replace('\n', ',')
+            | split(',')
+            | map('trim')
+            | list)
+            if ssh_public_keys is string else ssh_public_keys
+          }}
+  when:
+    - ssh_public_keys is defined
+    - ssh_public_keys | length > 0
+  tags: ssh_public_keys
 
--  name:  create or delete load balancer
-   local_action:
-     module: ec2_elb_lb
-     aws_access_key: "{{ec2_access_key}}"
-     aws_secret_key: "{{ec2_secret_key}}"
-     region: "{{ vpc_region }}"   
-     name: "{{ item.0.name }}"
-     state: "{{ item.0.state }}"
-     cross_az_load_balancing: "{{ item.0.cross_az_load_balancing }}"    
-     listeners: "{{ item.0.listeners }}"
-     scheme: "{{ item.0.scheme }}"    
-     instance_ids: "{{ ec2_id_list }}" 
-     subnets: "{{ subnet_facts| json_query(qry) }}"
-     security_group_names: "{{ item.0.security_group_names }}" 
-     stickiness: "{{ item.0.stickiness }}"
-     health_check: "{{ item.0.health_check }}"
-#     access_logs: "{{ item.access_logs }}"
-     purge_instance_ids: yes
-     purge_listeners: yes
-     purge_subnets: yes
-     purge_zones: yes    
-   with_subelements: 
-    - "{{ list_of_load_balancer }}"
-    - subnets
-   vars:
-    qry: "subnets[?tags.Name=='{{ item.1 }}'].id"
-   register: created_elb
-   tags:
-    - elb
-
+...
